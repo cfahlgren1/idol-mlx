@@ -170,6 +170,18 @@ IDOL_MLX_E2E=1 uv run pytest tests/test_e2e.py   # the real model, ~20 s once se
 
 The end-to-end tests check that idol-mlx's quantizer reproduces the published 8-bit pack exactly, then run a real generation.
 
+### Releasing
+
+Releases publish from GitHub Actions through PyPI Trusted Publishing, so there's no API token to manage:
+
+```bash
+uv version --bump patch            # or minor / major
+git commit -am "release v$(uv version --short)"
+git tag "v$(uv version --short)" && git push --follow-tags
+```
+
+The [release workflow](.github/workflows/release.yml) checks the tag matches the version, runs lint and tests, publishes to PyPI and creates the GitHub release.
+
 ## Credits
 
 idol-mlx is an unofficial community project. It is not affiliated with Speri Labs.
