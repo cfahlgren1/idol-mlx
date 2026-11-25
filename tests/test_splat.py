@@ -102,3 +102,14 @@ def test_rejects_nan_positions():
     glb[first_float : first_float + 4] = struct.pack("<f", float("nan"))
     with pytest.raises(InvalidSplatError, match="NaN"):
         Splat.from_glb(bytes(glb))
+
+
+def test_flags_collapsed_generations(splat: Splat):
+    splat.check_not_empty()  # the real fixture is healthy
+    assert splat.opaque_fraction > 0.5
+
+    collapsed = Splat.from_glb(FIXTURE.read_bytes())
+    collapsed.opacities = np.zeros_like(collapsed.opacities)
+    collapsed.opacities[:10] = 1.0  # a handful of stray Gaussians, like the collapsed rifle in the Met pilot
+    with pytest.raises(InvalidSplatError, match="collapsed"):
+        collapsed.check_not_empty()

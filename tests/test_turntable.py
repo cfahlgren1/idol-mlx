@@ -35,3 +35,13 @@ def test_gif_without_ffmpeg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_rejects_unknown_formats(tmp_path: Path):
     with pytest.raises(ValueError, match=".gif or .mp4"):
         write_animation(frames(), tmp_path / "spin.webm")
+
+
+def test_flat_frames_are_blank_but_dark_objects_are_not():
+    from idol_mlx.turntable import BACKGROUND, _is_blank
+
+    assert _is_blank(Image.new("RGB", (640, 640), (0, 0, 0)))  # the browser drew nothing
+    assert _is_blank(Image.new("RGB", (640, 640), (60, 20, 18)))  # camera inside the splat
+    dark_statue = Image.new("RGB", (640, 640), BACKGROUND)
+    dark_statue.paste((40, 46, 36), (280, 160, 360, 520))  # dark bronze, close to the background colour
+    assert not _is_blank(dark_statue)

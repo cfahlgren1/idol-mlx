@@ -83,8 +83,8 @@ class Idol:
         retries: int = 1,
         on_progress: ProgressCallback | None = None,
     ) -> Splat:
-        """Generate a splat. If the model diverges (NaN output) for this seed, retry up to `retries` times with
-        other seeds; the returned splat's `seed` says which one worked."""
+        """Generate a splat. If the model diverges (NaN output) or collapses (almost no opaque Gaussians) for this
+        seed, retry up to `retries` times with other seeds; the returned splat's `seed` says which one worked."""
         check_settings(steps=steps, gaussians=gaussians, mode=mode)
         image_bytes = _png_or_jpeg(image)
         for attempt in range(retries + 1):
@@ -93,10 +93,11 @@ class Idol:
                 splat = self._generate_once(
                     image_bytes, steps, guidance, gaussians, attempt_seed, mode, on_progress
                 )
+                splat.check_not_empty()
             except InvalidSplatError as err:
                 if attempt == retries:
                     raise GenerationError(
-                        f"The model diverged (NaN output) with seed {seed}"
+                        f"{err} with seed {seed}"
                         + (f" and {retries} other seed(s)" if retries else "")
                         + ". Try another --seed."
                     ) from err

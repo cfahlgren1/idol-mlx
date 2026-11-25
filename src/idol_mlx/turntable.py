@@ -27,7 +27,8 @@ BROWSERS = [
     "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 ]
 BACKGROUND = "#0d1117"
-RENDER_TIMEOUT_S = 600
+RENDER_TIMEOUT_S = 180  # a healthy 72-frame render takes ~20 s; stalls are retried
+RENDER_ATTEMPTS = 2
 OPAQUE = 0.5  # Gaussians at least this opaque decide the framing
 
 
@@ -82,6 +83,36 @@ def frame_splat(ply: bytes) -> Framing:
 
 
 def render_frames(
+    ply: bytes,
+    frames: int = 72,
+    size: int = 640,
+    on_frame: Callable[[int, int], None] | None = None,
+) -> list[Image.Image]:
+    """Render the turntable, retrying once when the headless browser stalls or draws blank frames."""
+    for attempt in range(RENDER_ATTEMPTS):
+        try:
+            images = _render_frames_once(ply, frames, size, on_frame)
+        except TurntableError:
+            if attempt == RENDER_ATTEMPTS - 1:
+                raise
+            continue
+        blank = sum(1 for image in images if _is_blank(image))
+        if blank == 0:
+            return images
+        if attempt == RENDER_ATTEMPTS - 1:
+            raise TurntableError(f"{blank} of {frames} frames rendered blank")
+    raise AssertionError("unreachable")
+
+
+def _is_blank(image: Image.Image) -> bool:
+    """True when the frame is one flat color: either nothing was drawn (the browser glitched, often pure black)
+    or the camera ended up inside the splat. Dark objects on the dark background still have structure, so they
+    pass even when they're close to the background color."""
+    pixels = np.asarray(image.convert("RGB").resize((64, 64)), dtype=np.float32)
+    return float(pixels.std(axis=(0, 1)).max()) < 2.0
+
+
+def _render_frames_once(
     ply: bytes,
     frames: int = 72,
     size: int = 640,

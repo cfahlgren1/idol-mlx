@@ -28,6 +28,7 @@ PLY_PROPERTIES = [
 COMPONENTS = {"SCALAR": 1, "VEC3": 3, "VEC4": 4}
 FLOAT32 = 5126
 EPS = 1e-7
+MIN_OPAQUE_FRACTION = 0.01
 
 
 class InvalidSplatError(ValueError):
@@ -73,6 +74,18 @@ class Splat:
 
     def __len__(self) -> int:
         return len(self.positions)
+
+    @property
+    def opaque_fraction(self) -> float:
+        """Share of Gaussians at least half opaque. Healthy objects are well above MIN_OPAQUE_FRACTION; a
+        generation that collapsed (often after a degenerate camera guess) leaves almost none."""
+        return float((self.opacities >= 0.5).mean()) if len(self) else 0.0
+
+    def check_not_empty(self) -> None:
+        if self.opaque_fraction < MIN_OPAQUE_FRACTION:
+            raise InvalidSplatError(
+                f"Only {self.opaque_fraction:.2%} of Gaussians are opaque; the generation collapsed"
+            )
 
     def save(self, path: str | Path) -> Path:
         """Write `.ply` (standard 3DGS) or `.glb` (as mlx-serve returned it), chosen by the file extension."""
