@@ -16,13 +16,14 @@ from PIL import Image
 
 from . import pack
 from .server import DEFAULT_URL, Server, ensure_server, rescan
-from .splat import Splat
+from .splat import InvalidSplatError, Splat
 
 MIN_STEPS = 1
 MAX_STEPS = 200
 MIN_GAUSSIANS = 32_768
 MAX_GAUSSIANS = 1_048_576
 REQUEST_TIMEOUT_S = 1800
+RETRY_SEED_STEP = 1000  # far from the original seed, so a retry is a genuinely different sample
 
 
 @dataclass(frozen=True)
@@ -79,12 +80,44 @@ class Idol:
         gaussians: int = 262_144,
         seed: int = 42,
         mode: str = "synthetic",
+        retries: int = 1,
         on_progress: ProgressCallback | None = None,
     ) -> Splat:
+        """Generate a splat. If the model diverges (NaN output) for this seed, retry up to `retries` times with
+        other seeds; the returned splat's `seed` says which one worked."""
         check_settings(steps=steps, gaussians=gaussians, mode=mode)
+        image_bytes = _png_or_jpeg(image)
+        for attempt in range(retries + 1):
+            attempt_seed = seed + attempt * RETRY_SEED_STEP
+            try:
+                splat = self._generate_once(
+                    image_bytes, steps, guidance, gaussians, attempt_seed, mode, on_progress
+                )
+            except InvalidSplatError as err:
+                if attempt == retries:
+                    raise GenerationError(
+                        f"The model diverged (NaN output) with seed {seed}"
+                        + (f" and {retries} other seed(s)" if retries else "")
+                        + ". Try another --seed."
+                    ) from err
+                continue
+            splat.seed = attempt_seed
+            return splat
+        raise AssertionError("unreachable")
+
+    def _generate_once(
+        self,
+        image_bytes: bytes,
+        steps: int,
+        guidance: float,
+        gaussians: int,
+        seed: int,
+        mode: str,
+        on_progress: ProgressCallback | None,
+    ) -> Splat:
         body = {
             "model": self.model,
-            "image": base64.b64encode(_png_or_jpeg(image)).decode(),
+            "image": base64.b64encode(image_bytes).decode(),
             "steps": steps,
             "guidance_scale": guidance,
             "num_gaussians": gaussians,
@@ -110,7 +143,10 @@ class Idol:
                 line = raw.decode().strip()
                 if not line.startswith("data:"):
                     continue
-                event = json.loads(line[len("data:") :])
+                try:
+                    event = json.loads(line[len("data:") :])
+                except json.JSONDecodeError as err:
+                    raise GenerationError(f"mlx-serve sent an unreadable event: {line[:200]}") from err
                 kind = event.get("type")
                 if kind == "progress" and on_progress:
                     on_progress(Progress(event["stage"], event["step"], event["total"]))

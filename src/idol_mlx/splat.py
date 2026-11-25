@@ -30,6 +30,10 @@ FLOAT32 = 5126
 EPS = 1e-7
 
 
+class InvalidSplatError(ValueError):
+    """The splat contains NaN or infinite values: the model diverged for this image and seed."""
+
+
 @dataclass
 class Splat:
     """One generated object. Linear scales and opacities, quaternions in glTF order (x, y, z, w)."""
@@ -40,6 +44,7 @@ class Splat:
     scales: np.ndarray
     opacities: np.ndarray
     sh0: np.ndarray
+    seed: int | None = None  # set by Idol.generate: the seed that produced this splat
 
     @classmethod
     def from_glb(cls, glb: bytes) -> Splat:
@@ -54,7 +59,7 @@ class Splat:
         def read(name: str) -> np.ndarray:
             return _accessor(doc, binary, attributes[name])
 
-        return cls(
+        splat = cls(
             glb=glb,
             positions=read("POSITION"),
             rotations=read(ATTR_ROTATION),
@@ -62,6 +67,9 @@ class Splat:
             opacities=read(ATTR_OPACITY).reshape(-1),
             sh0=read(ATTR_SH0),
         )
+        if not all(np.isfinite(a).all() for a in (splat.positions, splat.scales, splat.rotations, splat.sh0)):
+            raise InvalidSplatError("The splat contains NaN or infinite values")
+        return splat
 
     def __len__(self) -> int:
         return len(self.positions)
@@ -106,7 +114,11 @@ def _read_glb(glb: bytes) -> tuple[dict, bytes]:
     json_length, json_type = struct.unpack_from("<II", glb, 12)
     if json_type != JSON_CHUNK:
         raise ValueError("GLB's first chunk is not JSON")
-    doc = json.loads(glb[20 : 20 + json_length])
+    try:
+        doc = json.loads(glb[20 : 20 + json_length])
+    except json.JSONDecodeError as err:
+        # mlx-serve writes accessor bounds as bare `nan` when the model's output diverged
+        raise InvalidSplatError(f"The GLB header isn't valid JSON ({err.msg} at {err.pos})") from err
     bin_offset = 20 + json_length
     bin_length, bin_type = struct.unpack_from("<II", glb, bin_offset)
     if bin_type != BIN_CHUNK:

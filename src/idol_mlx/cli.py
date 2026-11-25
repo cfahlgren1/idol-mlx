@@ -145,8 +145,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
                 continue
             splat.save(out_path)
             elapsed = time.monotonic() - started
+            retried = f" · retried with seed {splat.seed}" if splat.seed != args.seed else ""
             console.print(
-                f"[green]✓[/green] {out_path}  [dim]{len(splat):,} Gaussians · {elapsed:.1f} s[/dim]"
+                f"[green]✓[/green] {out_path}  [dim]{len(splat):,} Gaussians · {elapsed:.1f} s{retried}[/dim]"
             )
             written.append(out_path)
             if spin_path:
