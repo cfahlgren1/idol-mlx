@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -15,6 +16,7 @@ DEFAULT_URL = "http://127.0.0.1:11234"
 MODELS_DIR = Path.home() / ".mlx-serve" / "models"
 LOG_PATH = Path.home() / ".mlx-serve" / "idol-mlx-server.log"
 STARTUP_TIMEOUT_S = 120
+CAMERA_LOG_LINE = re.compile(rb"\[idol\] camera .*radius=([\d.]+)")
 
 
 class ServerError(RuntimeError):
@@ -92,6 +94,25 @@ class Server:
 
     def __exit__(self, *exc) -> None:
         self.stop()
+
+
+def log_size(log_path: Path = LOG_PATH) -> int:
+    try:
+        return log_path.stat().st_size
+    except FileNotFoundError:
+        return 0
+
+
+def logged_camera_radius(offset: int, log_path: Path = LOG_PATH) -> float | None:
+    """The camera distance mlx-serve logged for the latest generation written after byte `offset` of its log. None
+    when nothing was logged there, for example when the server was started some other way and logs elsewhere."""
+    try:
+        with open(log_path, "rb") as log:
+            log.seek(offset)
+            radii = CAMERA_LOG_LINE.findall(log.read())
+    except FileNotFoundError:
+        return None
+    return float(radii[-1]) if radii else None
 
 
 def ensure_server(url: str = DEFAULT_URL, keep_running: bool = False) -> Server:

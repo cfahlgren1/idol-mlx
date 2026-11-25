@@ -51,7 +51,7 @@ The first run installs [mlx-serve](https://github.com/ddalcu/mlx-serve) through 
 idol-mlx photo.jpg                     # → photo.ply
 idol-mlx photo.jpg --view              # also open it in the browser
 idol-mlx shots/ -o splats/             # every image in a folder
-idol-mlx photo.jpg --mode real         # framing tuned for photographs
+idol-mlx photo.jpg --mode synthetic    # tighter framing for renders and generated images
 idol-mlx photo.jpg --format glb        # GLB instead of PLY
 idol-mlx photo.jpg --seed 7            # a different take on the same image
 idol-mlx photo.jpg --keep-server       # leave the model loaded for the next run
@@ -84,7 +84,7 @@ Times are per image with the model already loaded. The first image in a run also
 ### Input tips
 
 - **One object, plainly visible.** The background is removed for you.
-- Use `--mode real` for photos and the default `--mode synthetic` for renders and generated images. It changes how tightly the object is cropped.
+- The default `--mode real` suits photos. For renders and AI-generated images, `--mode synthetic` crops tighter around the object, which is all the mode changes.
 - Objects cut off at the edge of the frame still work, but the hidden part is a guess.
 
 ## From Python
@@ -142,7 +142,7 @@ Not yet. idol-mlx is built on MLX, which is Apple Silicon only. On NVIDIA GPUs, 
 <details>
 <summary><b>How much memory does it need?</b></summary>
 
-About 4 GB of unified memory while it runs, plus about 3.5 GB of disk for the two model packs.
+The weights take about 4 GB, but peak unified memory while generating is higher: 7.6 to 11.3 GB on an M3 Max at the default 262,144 Gaussians, measured with `footprint`. A Mac with 16 GB or more is comfortable. The two model packs take about 3.5 GB of disk.
 </details>
 
 <details>

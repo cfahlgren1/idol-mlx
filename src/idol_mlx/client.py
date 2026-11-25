@@ -15,7 +15,7 @@ from typing import Self
 from PIL import Image
 
 from . import pack
-from .server import DEFAULT_URL, Server, ensure_server, rescan
+from .server import DEFAULT_URL, Server, ensure_server, log_size, logged_camera_radius, rescan
 from .splat import InvalidSplatError, Splat
 
 MIN_STEPS = 1
@@ -24,6 +24,9 @@ MIN_GAUSSIANS = 32_768
 MAX_GAUSSIANS = 1_048_576
 REQUEST_TIMEOUT_S = 1800
 RETRY_SEED_STEP = 1000  # far from the original seed, so a retry is a genuinely different sample
+# Idol reports this camera distance when it guesses an orthographic (flat) camera. Turbo's few steps often turn
+# that guess into a dark blob or a melted shape, so a Turbo generation with it is retried with another seed.
+ORTHOGRAPHIC_RADIUS = 1000.0
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,7 @@ class Idol:
     """
 
     def __init__(self, url: str = DEFAULT_URL, keep_server: bool = False, original: bool = False):
+        self.original = original
         self.model = pack.BASE_MODEL_ID if original else pack.TURBO_MODEL_ID
         if original:
             pack.ensure_base_pack()
@@ -79,16 +83,22 @@ class Idol:
         guidance: float = 0.0,
         gaussians: int = 262_144,
         seed: int = 42,
-        mode: str = "synthetic",
+        mode: str = "real",
         retries: int = 1,
         on_progress: ProgressCallback | None = None,
     ) -> Splat:
-        """Generate a splat. If the model diverges (NaN output) or collapses (almost no opaque Gaussians) for this
-        seed, retry up to `retries` times with other seeds; the returned splat's `seed` says which one worked."""
+        """Generate a splat. `mode` is "real" for photographs or "synthetic" for renders and generated images, which
+        crops tighter around the object.
+
+        If the model diverges (NaN output) or collapses (almost no opaque Gaussians) for this seed, retry up to
+        `retries` times with other seeds; the returned splat's `seed` says which one worked. A Turbo generation that
+        guessed an orthographic camera is retried the same way, and if every seed does, the last splat is returned
+        with `orthographic_camera` set so the caller can warn that it may look wrong."""
         check_settings(steps=steps, gaussians=gaussians, mode=mode)
         image_bytes = _png_or_jpeg(image)
         for attempt in range(retries + 1):
             attempt_seed = seed + attempt * RETRY_SEED_STEP
+            log_offset = log_size()
             try:
                 splat = self._generate_once(
                     image_bytes, steps, guidance, gaussians, attempt_seed, mode, on_progress
@@ -103,6 +113,11 @@ class Idol:
                     ) from err
                 continue
             splat.seed = attempt_seed
+            splat.orthographic_camera = (
+                not self.original and logged_camera_radius(log_offset) == ORTHOGRAPHIC_RADIUS
+            )
+            if splat.orthographic_camera and attempt < retries:
+                continue
             return splat
         raise AssertionError("unreachable")
 

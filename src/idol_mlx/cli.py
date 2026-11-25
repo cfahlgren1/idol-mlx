@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import platform
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -90,8 +91,8 @@ def _generate_parser() -> argparse.ArgumentParser:
     p.add_argument("--steps", type=int, help="override the preset's step count")
     p.add_argument("--gaussians", type=int, help="override the preset's Gaussian count (32768 to 1048576)")
     p.add_argument("--seed", type=int, default=42, help="change for a different take (default: 42)")
-    p.add_argument("--mode", choices=["synthetic", "real"], default="synthetic",
-                   help="'real' frames photographs more loosely (default: synthetic, for renders)")  # fmt: skip
+    p.add_argument("--mode", choices=["real", "synthetic"], default="real",
+                   help="'real' for photographs (default); 'synthetic' crops tighter, for renders and generated images")  # fmt: skip
     p.add_argument("--keep-server", action="store_true", help="leave mlx-serve running afterwards")
     p.add_argument("--skip-existing", action="store_true", help="skip images whose output already exists")
     p.add_argument("--version", action="version", version=f"idol-mlx {__version__}")
@@ -149,6 +150,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
             console.print(
                 f"[green]✓[/green] {out_path}  [dim]{len(splat):,} Gaussians · {elapsed:.1f} s{retried}[/dim]"
             )
+            if splat.orthographic_camera:
+                console.print(
+                    "  [yellow]![/yellow] [dim]The model guessed a flat camera for every seed it tried, which often "
+                    "gives a dark or melted splat. If this one looks wrong, try another --seed, the other --mode, "
+                    "or --original.[/dim]"
+                )
             written.append(out_path)
             if spin_path:
                 spins.append((out_path, spin_path))
@@ -306,7 +313,8 @@ def _setup_parser() -> argparse.ArgumentParser:
 def cmd_setup(args: argparse.Namespace) -> int:
     _ensure_mlx_serve_installed(assume_yes=args.yes)
     pack.ensure_turbo_pack(log=_log)
-    console.print("[green]Ready.[/green] Try: idol-mlx photo.jpg --view")
+    command = "idol-mlx" if shutil.which("idol-mlx") else "uvx idol-mlx"
+    console.print(f"[green]Ready.[/green] Try: {command} photo.jpg --view")
     return 0
 
 

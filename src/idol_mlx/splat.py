@@ -46,6 +46,9 @@ class Splat:
     opacities: np.ndarray
     sh0: np.ndarray
     seed: int | None = None  # set by Idol.generate: the seed that produced this splat
+    orthographic_camera: bool = (
+        False  # set by Idol.generate: Turbo guessed a flat camera, often a broken splat
+    )
 
     @classmethod
     def from_glb(cls, glb: bytes) -> Splat:
