@@ -177,7 +177,7 @@ Releases publish from GitHub Actions through PyPI Trusted Publishing, so there's
 ```bash
 uv version --bump patch            # or minor / major
 git commit -am "release v$(uv version --short)"
-git tag "v$(uv version --short)" && git push --follow-tags
+git tag -a "v$(uv version --short)" -m "v$(uv version --short)" && git push --follow-tags
 ```
 
 The [release workflow](.github/workflows/release.yml) checks the tag matches the version, runs lint and tests, publishes to PyPI and creates the GitHub release.
