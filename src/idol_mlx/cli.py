@@ -1,0 +1,255 @@
+"""idol-mlx: photo to 3D Gaussian splat on Apple Silicon."""
+
+from __future__ import annotations
+
+import argparse
+import platform
+import sys
+import time
+from pathlib import Path
+
+from rich.console import Console
+from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeElapsedColumn
+
+from . import __version__, pack, server
+from .client import GenerationError, Idol, check_settings
+from .client import Progress as StageProgress
+from .server import ServerError
+
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp", ".tif", ".tiff"}
+
+PRESETS = {
+    "fast": {"steps": 4, "guidance": 0.0, "gaussians": 65_536},
+    "default": {"steps": 5, "guidance": 0.0, "gaussians": 262_144},
+    "high": {"steps": 8, "guidance": 0.0, "gaussians": 262_144},
+    "original": {"steps": 50, "guidance": 3.0, "gaussians": 262_144},
+}
+
+STAGE_LABELS = {
+    "idol-preprocess": "preparing image",
+    "idol-matte": "removing background",
+    "idol-condition": "encoding image",
+    "idol-denoise": "denoising",
+    "idol-octree": "decoding octree",
+    "idol-gaussians": "decoding Gaussians",
+}
+
+console = Console()
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["setup"]:
+        return _guarded(cmd_setup, _setup_parser().parse_args(argv[1:]))
+    if argv[:1] == ["uninstall"]:
+        return _guarded(cmd_uninstall, _uninstall_parser().parse_args(argv[1:]))
+    if argv[:1] == ["view"]:
+        return _guarded(cmd_view, _view_parser().parse_args(argv[1:]))
+    return _guarded(cmd_generate, _generate_parser().parse_args(argv))
+
+
+def _guarded(command, args) -> int:
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        console.print("[red]idol-mlx needs an Apple Silicon Mac.[/red] On NVIDIA GPUs, use Idol's own SDK.")
+        return 1
+    try:
+        return command(args)
+    except KeyboardInterrupt:
+        console.print("\nStopped.")
+        return 130
+    except (ServerError, GenerationError, ValueError, FileNotFoundError) as err:
+        console.print(f"[red]Error:[/red] {err}")
+        return 1
+
+
+# ---------------------------------------------------------------- generate
+
+
+def _generate_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="idol-mlx",
+        description="Turn a photo of an object into a 3D Gaussian splat, locally on Apple Silicon.",
+        epilog="Other commands: `idol-mlx view FILE.ply…` (open existing splats), "
+        "`idol-mlx setup` (install everything without generating), `idol-mlx uninstall`.",
+    )
+    p.add_argument("inputs", nargs="+", type=Path, help="image files or folders of images")
+    p.add_argument("-o", "--output", type=Path, help="output folder (default: next to each image)")
+    p.add_argument("--format", choices=["ply", "glb"], default="ply", help="output format (default: ply)")
+    p.add_argument("--view", action="store_true", help="open the results in a browser viewer")
+    preset = p.add_mutually_exclusive_group()
+    preset.add_argument("--fast", action="store_true", help="4 steps, 65k Gaussians (~12 s)")
+    preset.add_argument("--quality", choices=["high"], help="'high': 8 steps (~23 s)")
+    preset.add_argument("--original", action="store_true", help="base Idol, 50 steps + guidance (~3 min)")
+    p.add_argument("--steps", type=int, help="override the preset's step count")
+    p.add_argument("--gaussians", type=int, help="override the preset's Gaussian count (32768 to 1048576)")
+    p.add_argument("--seed", type=int, default=42, help="change for a different take (default: 42)")
+    p.add_argument("--mode", choices=["synthetic", "real"], default="synthetic",
+                   help="'real' frames photographs more loosely (default: synthetic, for renders)")  # fmt: skip
+    p.add_argument("--keep-server", action="store_true", help="leave mlx-serve running afterwards")
+    p.add_argument("--version", action="version", version=f"idol-mlx {__version__}")
+    return p
+
+
+def cmd_generate(args: argparse.Namespace) -> int:
+    images = _collect_images(args.inputs)
+    preset_name = (
+        "original" if args.original else "fast" if args.fast else "high" if args.quality else "default"
+    )
+    settings = dict(PRESETS[preset_name])
+    if args.steps is not None:
+        settings["steps"] = args.steps
+    if args.gaussians is not None:
+        settings["gaussians"] = args.gaussians
+    check_settings(steps=settings["steps"], gaussians=settings["gaussians"], mode=args.mode)
+
+    _ensure_mlx_serve_installed(assume_yes=False)
+    if args.output:
+        args.output.mkdir(parents=True, exist_ok=True)
+
+    if args.original:
+        pack.ensure_base_pack(log=_log)
+    else:
+        pack.ensure_turbo_pack(log=_log)
+    with console.status("Starting mlx-serve…"):
+        idol = Idol(keep_server=args.keep_server, original=args.original)
+    written: list[Path] = []
+    try:
+        for image in images:
+            out_dir = args.output or image.parent
+            out_path = out_dir / f"{image.stem}.{args.format}"
+            started = time.monotonic()
+            splat = _generate_with_progress(idol, image, settings, args)
+            splat.save(out_path)
+            elapsed = time.monotonic() - started
+            console.print(
+                f"[green]✓[/green] {out_path}  [dim]{len(splat):,} Gaussians · {elapsed:.1f} s[/dim]"
+            )
+            written.append(out_path)
+    finally:
+        idol.close()
+
+    if args.view:
+        plys = [p for p in written if p.suffix == ".ply"]
+        if not plys:
+            console.print("The viewer shows .ply files; rerun without --format glb to view them.")
+            return 0
+        from .viewer import serve
+
+        serve(plys)
+    return 0
+
+
+def _generate_with_progress(idol: Idol, image: Path, settings: dict, args: argparse.Namespace):
+    columns = (
+        TextColumn("[bold]{task.fields[name]}[/bold]"),
+        TextColumn("{task.description}", style="dim"),
+        BarColumn(bar_width=28),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+    )
+    with Progress(*columns, console=console, transient=True) as bar:
+        task = bar.add_task("starting", total=None, name=image.name)
+
+        def on_progress(p: StageProgress) -> None:
+            label = STAGE_LABELS.get(p.stage, p.stage)
+            if p.stage == "idol-denoise":
+                label = f"denoising {p.step}/{p.total}"
+            bar.update(task, description=label, completed=p.step, total=p.total)
+
+        return idol.generate(image, seed=args.seed, mode=args.mode, on_progress=on_progress, **settings)
+
+
+def _log(message: str) -> None:
+    console.print(f"[dim]•[/dim] {message}")
+
+
+def _collect_images(inputs: list[Path]) -> list[Path]:
+    images: list[Path] = []
+    for path in inputs:
+        if path.is_dir():
+            found = sorted(p for p in path.iterdir() if p.suffix.lower() in IMAGE_SUFFIXES)
+            if not found:
+                raise FileNotFoundError(f"No images in {path}")
+            images.extend(found)
+        elif path.is_file():
+            images.append(path)
+        else:
+            raise FileNotFoundError(f"{path} doesn't exist")
+    return images
+
+
+# ---------------------------------------------------------------- view / setup / uninstall
+
+
+def _view_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="idol-mlx view", description="Open .ply splats in a browser viewer.")
+    p.add_argument("files", nargs="+", type=Path, help=".ply files, or folders of them")
+    p.add_argument("--no-browser", action="store_true", help="print the URL instead of opening it")
+    return p
+
+
+def cmd_view(args: argparse.Namespace) -> int:
+    from .viewer import serve
+
+    plys: list[Path] = []
+    for path in args.files:
+        if path.is_dir():
+            plys.extend(sorted(path.glob("*.ply")))
+        elif path.is_file() and path.suffix.lower() == ".ply":
+            plys.append(path)
+        else:
+            raise FileNotFoundError(f"{path} isn't a .ply file or a folder")
+    if not plys:
+        raise FileNotFoundError("No .ply files to show")
+    serve(plys, open_browser=not args.no_browser)
+    return 0
+
+
+def _setup_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="idol-mlx setup", description="Install mlx-serve and build the Turbo pack."
+    )
+    p.add_argument("-y", "--yes", action="store_true", help="install mlx-serve without asking")
+    return p
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    _ensure_mlx_serve_installed(assume_yes=args.yes)
+    pack.ensure_turbo_pack(log=_log)
+    console.print("[green]Ready.[/green] Try: idol-mlx photo.jpg --view")
+    return 0
+
+
+def _uninstall_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="idol-mlx uninstall", description="Remove the model packs idol-mlx added."
+    )
+    p.add_argument("--all", action="store_true", help="also remove the base Idol pack (~3 GB)")
+    return p
+
+
+def cmd_uninstall(args: argparse.Namespace) -> int:
+    if pack.remove_turbo_pack():
+        console.print(f"Removed {pack.TURBO_DIR}")
+    if args.all and pack.remove_base_pack():
+        console.print(f"Removed {pack.BASE_DIR}")
+    console.print("mlx-serve itself stays installed; remove it with `brew uninstall mlx-serve`.")
+    return 0
+
+
+def _ensure_mlx_serve_installed(assume_yes: bool) -> None:
+    if server.find_binary():
+        return
+    console.print("idol-mlx runs the model with [bold]mlx-serve[/bold], which isn't installed.")
+    console.print("It installs from its Homebrew tap: github.com/ddalcu/mlx-serve")
+    if not assume_yes:
+        answer = console.input("Install it now with Homebrew? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            raise ServerError(
+                "mlx-serve is required. Install it with `idol-mlx setup` or from its GitHub page."
+            )
+    server.install_with_homebrew()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

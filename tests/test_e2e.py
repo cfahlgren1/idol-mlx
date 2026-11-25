@@ -1,0 +1,46 @@
+"""End-to-end tests against the real model. They need an Apple Silicon Mac with mlx-serve installed, take about a
+minute, and download about 5 GB the first time. Run with: IDOL_MLX_E2E=1 uv run pytest tests/test_e2e.py"""
+
+import os
+import platform
+from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("IDOL_MLX_E2E") != "1" or platform.machine() != "arm64",
+    reason="set IDOL_MLX_E2E=1 on an Apple Silicon Mac to run",
+)
+
+IMAGE = Path(__file__).parent / "fixtures" / "lamp.png"
+
+
+def test_turbo_pack_quantizes_like_the_published_base_pack():
+    """Our quantizer, run on Idol's untouched denoiser, must reproduce the base pack's 8-bit denoiser exactly.
+    This pins the merge path to the same layout mlx-serve was built for."""
+    import mlx.core as mx
+    from huggingface_hub import hf_hub_download
+
+    from idol_mlx import pack
+
+    pack.ensure_base_pack()
+    original = mx.load(hf_hub_download(pack.IDOL_REPO, "denoiser.safetensors"))
+    shipped = mx.load(str(pack.BASE_DIR / "denoiser.safetensors"))
+    ours = pack.quantize_blocks(original)
+
+    assert ours.keys() == shipped.keys()
+    different = [k for k in shipped if not mx.array_equal(ours[k], shipped[k]).item()]
+    assert different == []
+
+
+def test_generates_a_splat(tmp_path: Path):
+    from idol_mlx import Idol
+
+    stages = []
+    with Idol() as idol:
+        splat = idol.generate(IMAGE, gaussians=32_768, on_progress=lambda p: stages.append(p.stage))
+
+    assert len(splat) == 32_768
+    assert "idol-denoise" in stages
+    out = splat.save(tmp_path / "lamp.ply")
+    assert out.stat().st_size > 32_768 * 17 * 4

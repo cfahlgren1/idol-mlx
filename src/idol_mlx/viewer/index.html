@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>idol-mlx viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0d1117; color: #e6edf3; font: 14px -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  #bar { position: fixed; top: 12px; left: 12px; right: 12px; z-index: 10; display: flex; flex-wrap: wrap; gap: 8px; }
+  #bar a { padding: 6px 12px; background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; text-decoration: none; }
+  #bar a.on { background: #2f6f3e; border-color: #3f8f50; }
+  #hint { position: fixed; bottom: 12px; left: 12px; color: #8d96a0; }
+  #empty { position: fixed; inset: 0; display: grid; place-items: center; color: #8d96a0; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
+} }
+</script>
+</head>
+<body>
+<div id="bar"></div>
+<div id="hint">drag to orbit · scroll to zoom · right-drag to pan</div>
+<script type="module">
+import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
+
+const files = await (await fetch('files.json')).json();
+const bar = document.getElementById('bar');
+if (files.length === 0) {
+  document.body.insertAdjacentHTML('beforeend', '<div id="empty">No splats to show</div>');
+} else {
+  const current = new URLSearchParams(location.search).get('f') || files[0];
+  for (const name of files) {
+    const link = document.createElement('a');
+    link.href = `?f=${encodeURIComponent(name)}`;
+    link.textContent = name;
+    link.classList.toggle('on', name === current);
+    bar.appendChild(link);
+  }
+  const viewer = new GaussianSplats3D.Viewer({
+    cameraUp: [0, 1, 0],
+    initialCameraPosition: [0.4, 0.5, 1.6],
+    initialCameraLookAt: [0, 0, 0],
+    sharedMemoryForWorkers: false,
+  });
+  await viewer.addSplatScene(`splats/${encodeURIComponent(current)}`, {
+    format: GaussianSplats3D.SceneFormat.Ply,
+    showLoadingUI: true,
+  });
+  viewer.start();
+}
+</script>
+</body>
+</html>
