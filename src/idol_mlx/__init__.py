@@ -4,4 +4,4 @@ from .client import GenerationError, Idol, Progress
 from .splat import Splat
 
 __all__ = ["GenerationError", "Idol", "Progress", "Splat"]
-__version__ = "0.1.0"
+__version__ = "0.1.1"
