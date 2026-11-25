@@ -8,9 +8,24 @@ import numpy as np
 import pytest
 
 from idol_mlx import Splat
-from idol_mlx.splat import PLY_PROPERTIES, InvalidSplatError
+from idol_mlx.splat import PLY_PROPERTIES, InvalidSplatError, gltf_to_3dgs
 
 FIXTURE = Path(__file__).parent / "fixtures" / "lamp.glb"
+TURN_X_180 = np.diag([1.0, -1.0, -1.0])
+
+
+def unit(quaternions: np.ndarray) -> np.ndarray:
+    """The model's quaternions are unit length only to about 1e-3."""
+    return quaternions / np.linalg.norm(quaternions, axis=1, keepdims=True)
+
+
+def rotation_matrices(wxyz: np.ndarray) -> np.ndarray:
+    w, x, y, z = (wxyz[:, i].astype(np.float64) for i in range(4))
+    return np.stack([
+        np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)], axis=-1),
+        np.stack([2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)], axis=-1),
+        np.stack([2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)], axis=-1),
+    ], axis=1)  # fmt: skip
 
 
 @pytest.fixture(scope="module")
@@ -48,8 +63,9 @@ def test_ply_values_round_trip(splat: Splat):
     _, rows = read_ply(splat.to_ply())
     columns = {name: rows[:, i] for i, name in enumerate(PLY_PROPERTIES)}
 
+    # y-down 3DGS convention: turned 180 degrees about x from glTF's y-up
     xyz = np.stack([columns["x"], columns["y"], columns["z"]], axis=1)
-    assert np.array_equal(xyz, splat.positions)
+    assert np.array_equal(xyz, splat.positions * np.array([1, -1, -1], dtype=np.float32))
 
     # log scales and logit opacities, as 3DGS stores them
     scales = np.exp(np.stack([columns[f"scale_{i}"] for i in range(3)], axis=1))
@@ -57,9 +73,12 @@ def test_ply_values_round_trip(splat: Splat):
     opacity = 1 / (1 + np.exp(-columns["opacity"]))
     assert np.allclose(opacity, np.clip(splat.opacities, 1e-7, 1 - 1e-7), atol=1e-5)
 
-    # glTF stores (x, y, z, w); 3DGS wants w first
+    # glTF stores (x, y, z, w); 3DGS wants w first, turned with the positions
     wxyz = np.stack([columns[f"rot_{i}"] for i in range(4)], axis=1)
-    assert np.array_equal(wxyz, splat.rotations[:, [3, 0, 1, 2]])
+    gltf_wxyz = splat.rotations[:, [3, 0, 1, 2]]
+    assert np.allclose(
+        rotation_matrices(unit(wxyz)), TURN_X_180 @ rotation_matrices(unit(gltf_wxyz)), atol=1e-5
+    )
 
 
 def test_save_picks_format_from_extension(splat: Splat, tmp_path: Path):
@@ -113,3 +132,21 @@ def test_flags_collapsed_generations(splat: Splat):
     collapsed.opacities[:10] = 1.0  # a handful of stray Gaussians, like the collapsed rifle in the Met pilot
     with pytest.raises(InvalidSplatError, match="collapsed"):
         collapsed.check_not_empty()
+
+
+def test_gltf_to_3dgs_turns_splats_and_their_orientation_together():
+    rng = np.random.default_rng(0)
+    xyzw = rng.normal(size=(64, 4)).astype(np.float32)
+    xyzw /= np.linalg.norm(xyzw, axis=1, keepdims=True)
+    positions = rng.normal(size=(64, 3)).astype(np.float32)
+
+    turned_positions, turned_wxyz = gltf_to_3dgs(positions, xyzw)
+
+    assert np.allclose(turned_positions, positions @ TURN_X_180.T)
+    # a splat's world orientation is turned exactly like its position
+    assert np.allclose(
+        rotation_matrices(turned_wxyz), TURN_X_180 @ rotation_matrices(xyzw[:, [3, 0, 1, 2]]), atol=1e-6
+    )
+    # glTF's identity becomes a half turn about x
+    _, identity = gltf_to_3dgs(np.zeros((1, 3), np.float32), np.array([[0, 0, 0, 1]], np.float32))
+    assert np.allclose(identity, [[0, 1, 0, 0]])

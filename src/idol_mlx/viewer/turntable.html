@@ -39,8 +39,10 @@ const nextFrame = () => new Promise(r => requestAnimationFrame(r));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const render = () => renderer.render(scene, camera);
 
+// 3DGS files are y-down: "up" is -y, and the object faces -z.
+camera.up.set(0, -1, 0);
 function place(angle) {
-  camera.position.set(cx + cfg.radius * Math.sin(angle), cy + cfg.height, cz + cfg.radius * Math.cos(angle));
+  camera.position.set(cx + cfg.radius * Math.sin(angle), cy - cfg.height, cz - cfg.radius * Math.cos(angle));
   camera.lookAt(cx, cy, cz);
 }
 

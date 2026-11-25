@@ -39,8 +39,8 @@ if (files.length === 0) {
     bar.appendChild(link);
   }
   const viewer = new GaussianSplats3D.Viewer({
-    cameraUp: [0, 1, 0],
-    initialCameraPosition: [0.4, 0.5, 1.6],
+    cameraUp: [0, -1, 0], // 3DGS files are y-down
+    initialCameraPosition: [0.4, -0.5, -1.6],
     initialCameraLookAt: [0, 0, 0],
     sharedMemoryForWorkers: false,
   });

@@ -102,15 +102,17 @@ class Splat:
         return path
 
     def to_ply(self) -> bytes:
-        """3DGS layout: log scales, logit opacities, quaternions w first, normals zeroed."""
+        """Standard 3DGS file: log scales, logit opacities, quaternions w first, normals zeroed, and y down, the
+        OpenCV convention every splat viewer (and Idol's own exporter) uses. The GLB is glTF's y-up instead."""
         opacity = np.clip(self.opacities, EPS, 1 - EPS)
+        positions, rotations = gltf_to_3dgs(self.positions, self.rotations)
         columns = np.hstack([
-            self.positions,
-            np.zeros_like(self.positions),
+            positions,
+            np.zeros_like(positions),
             self.sh0,
             np.log(opacity / (1 - opacity))[:, None],
             np.log(np.maximum(self.scales, EPS)),
-            self.rotations[:, [3, 0, 1, 2]],
+            rotations,
         ]).astype("<f4")  # fmt: skip
         header = (
             "ply\nformat binary_little_endian 1.0\n"
@@ -119,6 +121,18 @@ class Splat:
             + "end_header\n"
         )
         return header.encode() + columns.tobytes()
+
+
+def gltf_to_3dgs(positions: np.ndarray, rotations_xyzw: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Turn y-up glTF splats 180 degrees about x into the y-down 3DGS convention.
+
+    Positions (x, y, z) become (x, -y, -z). Rotations are premultiplied by the same turn, the quaternion
+    (w, x, y, z) = (0, 1, 0, 0); for a glTF quaternion (x, y, z, w) the product, w first, is (-x, w, -z, y).
+    """
+    turned_positions = positions * np.array([1, -1, -1], dtype=positions.dtype)
+    x, y, z, w = (rotations_xyzw[:, i] for i in range(4))
+    turned_rotations = np.stack([-x, w, -z, y], axis=1)
+    return turned_positions, turned_rotations
 
 
 def _read_glb(glb: bytes) -> tuple[dict, bytes]:
