@@ -15,6 +15,7 @@ from . import __version__, pack, server
 from .client import GenerationError, Idol, check_settings
 from .client import Progress as StageProgress
 from .server import ServerError
+from .splat import Splat
 from .turntable import TurntableError, check_turntable_tools, render_frames, write_animation
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp", ".tif", ".tiff"}
@@ -92,6 +93,7 @@ def _generate_parser() -> argparse.ArgumentParser:
     p.add_argument("--mode", choices=["synthetic", "real"], default="synthetic",
                    help="'real' frames photographs more loosely (default: synthetic, for renders)")  # fmt: skip
     p.add_argument("--keep-server", action="store_true", help="leave mlx-serve running afterwards")
+    p.add_argument("--skip-existing", action="store_true", help="skip images whose output already exists")
     p.add_argument("--version", action="version", version=f"idol-mlx {__version__}")
     return p
 
@@ -121,36 +123,65 @@ def cmd_generate(args: argparse.Namespace) -> int:
     with console.status("Starting mlx-serve…"):
         idol = Idol(keep_server=args.keep_server, original=args.original)
     written: list[Path] = []
-    spins: list[tuple[Path, bytes]] = []
+    spins: list[tuple[Path, Path]] = []  # (splat file, turntable file)
+    failed: list[Path] = []
     try:
         for image in images:
             out_dir = args.output or image.parent
             out_path = out_dir / f"{image.stem}.{args.format}"
+            spin_path = out_dir / f"{image.stem}.{args.turntable}" if args.turntable else None
+            if args.skip_existing and out_path.exists():
+                console.print(f"[dim]• {out_path} exists, skipping[/dim]")
+                written.append(out_path)
+                if spin_path and not spin_path.exists():
+                    spins.append((out_path, spin_path))
+                continue
             started = time.monotonic()
-            splat = _generate_with_progress(idol, image, settings, args)
+            try:
+                splat = _generate_with_progress(idol, image, settings, args)
+            except GenerationError as err:
+                console.print(f"[red]✗[/red] {image}  [dim]{err}[/dim]")
+                failed.append(image)
+                continue
             splat.save(out_path)
             elapsed = time.monotonic() - started
             console.print(
                 f"[green]✓[/green] {out_path}  [dim]{len(splat):,} Gaussians · {elapsed:.1f} s[/dim]"
             )
             written.append(out_path)
-            if args.turntable:
-                spins.append((out_dir / f"{image.stem}.{args.turntable}", splat.to_ply()))
+            if spin_path:
+                spins.append((out_path, spin_path))
     finally:
         idol.close()
 
-    for spin_path, ply in spins:  # after the server stops, so the browser has the GPU to itself
-        _render_turntable(ply, spin_path)
+    # Turntables render after the server stops, so the browser has the GPU to itself.
+    for splat_path, spin_path in spins:
+        try:
+            _render_turntable(_ply_bytes(splat_path), spin_path)
+        except TurntableError as err:
+            console.print(f"[red]✗[/red] {spin_path}  [dim]{err}[/dim]")
+            failed.append(splat_path)
+
+    if failed:
+        console.print(
+            f"[red]{len(failed)} of {len(images)} failed:[/red] " + ", ".join(str(p) for p in failed)
+        )
 
     if args.view:
         plys = [p for p in written if p.suffix == ".ply"]
         if not plys:
             console.print("The viewer shows .ply files; rerun without --format glb to view them.")
-            return 0
+            return 1 if failed else 0
         from .viewer import serve
 
         serve(plys)
-    return 0
+    return 1 if failed else 0
+
+
+def _ply_bytes(splat_path: Path) -> bytes:
+    if splat_path.suffix == ".glb":
+        return Splat.from_glb(splat_path.read_bytes()).to_ply()
+    return splat_path.read_bytes()
 
 
 def _generate_with_progress(idol: Idol, image: Path, settings: dict, args: argparse.Namespace):
