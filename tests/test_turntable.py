@@ -6,7 +6,7 @@ import pytest
 from PIL import Image
 
 from idol_mlx import Splat
-from idol_mlx.turntable import frame_splat, write_animation
+from idol_mlx.turntable import BACKGROUND, _is_blank, frame_splat, write_animation
 
 FIXTURE = Path(__file__).parent / "fixtures" / "lamp.glb"
 
@@ -38,8 +38,6 @@ def test_rejects_unknown_formats(tmp_path: Path):
 
 
 def test_flat_frames_are_blank_but_dark_objects_are_not():
-    from idol_mlx.turntable import BACKGROUND, _is_blank
-
     assert _is_blank(Image.new("RGB", (640, 640), (0, 0, 0)))  # the browser drew nothing
     assert _is_blank(Image.new("RGB", (640, 640), (60, 20, 18)))  # camera inside the splat
     dark_statue = Image.new("RGB", (640, 640), BACKGROUND)
