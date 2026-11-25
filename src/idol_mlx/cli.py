@@ -150,12 +150,6 @@ def cmd_generate(args: argparse.Namespace) -> int:
             console.print(
                 f"[green]✓[/green] {out_path}  [dim]{len(splat):,} Gaussians · {elapsed:.1f} s{retried}[/dim]"
             )
-            if splat.orthographic_camera:
-                console.print(
-                    "  [yellow]![/yellow] [dim]The model guessed a flat camera for every seed it tried, which often "
-                    "gives a dark or melted splat. If this one looks wrong, try another --seed, the other --mode, "
-                    "or --original.[/dim]"
-                )
             written.append(out_path)
             if spin_path:
                 spins.append((out_path, spin_path))

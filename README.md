@@ -86,6 +86,7 @@ Times are per image with the model already loaded. The first image in a run also
 - **One object, plainly visible.** The background is removed for you.
 - The default `--mode real` suits photos. For renders and AI-generated images, `--mode synthetic` crops tighter around the object, which is all the mode changes.
 - Objects cut off at the edge of the frame still work, but the hidden part is a guess.
+- Thin or flat objects (swords, jewelry, line art) often come out as blobs with Turbo. They work better with `--original`.
 
 ## From Python
 

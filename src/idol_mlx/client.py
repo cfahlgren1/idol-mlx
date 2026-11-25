@@ -92,8 +92,8 @@ class Idol:
 
         If the model diverges (NaN output) or collapses (almost no opaque Gaussians) for this seed, retry up to
         `retries` times with other seeds; the returned splat's `seed` says which one worked. A Turbo generation that
-        guessed an orthographic camera is retried the same way, and if every seed does, the last splat is returned
-        with `orthographic_camera` set so the caller can warn that it may look wrong."""
+        guessed an orthographic camera is retried the same way; if every seed does, the last splat is returned, since
+        a flat camera can be right for flat objects."""
         check_settings(steps=steps, gaussians=gaussians, mode=mode)
         image_bytes = _png_or_jpeg(image)
         for attempt in range(retries + 1):
@@ -113,10 +113,8 @@ class Idol:
                     ) from err
                 continue
             splat.seed = attempt_seed
-            splat.orthographic_camera = (
-                not self.original and logged_camera_radius(log_offset) == ORTHOGRAPHIC_RADIUS
-            )
-            if splat.orthographic_camera and attempt < retries:
+            orthographic = not self.original and logged_camera_radius(log_offset) == ORTHOGRAPHIC_RADIUS
+            if orthographic and attempt < retries:
                 continue
             return splat
         raise AssertionError("unreachable")
