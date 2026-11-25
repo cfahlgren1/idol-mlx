@@ -1,6 +1,6 @@
 [project]
 name = "idol-mlx"
-version = "0.1.2"
+version = "0.1.3"
 description = "Photo to 3D Gaussian splat in ~15 s on a Mac: Idol + Idol Turbo on Apple Silicon (unofficial)"
 readme = "README.md"
 license = "Apache-2.0"
