@@ -35,6 +35,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/idol_mlx"]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["assets/", "DESIGN.md"]
+
 [tool.ruff]
 line-length = 110
 

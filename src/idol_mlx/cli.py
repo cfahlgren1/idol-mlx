@@ -15,6 +15,7 @@ from . import __version__, pack, server
 from .client import GenerationError, Idol, check_settings
 from .client import Progress as StageProgress
 from .server import ServerError
+from .turntable import TurntableError, check_turntable_tools, render_frames, write_animation
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp", ".tif", ".tiff"}
 
@@ -45,6 +46,8 @@ def main(argv: list[str] | None = None) -> int:
         return _guarded(cmd_uninstall, _uninstall_parser().parse_args(argv[1:]))
     if argv[:1] == ["view"]:
         return _guarded(cmd_view, _view_parser().parse_args(argv[1:]))
+    if argv[:1] == ["turntable"]:
+        return _guarded(cmd_turntable, _turntable_parser().parse_args(argv[1:]))
     return _guarded(cmd_generate, _generate_parser().parse_args(argv))
 
 
@@ -57,7 +60,7 @@ def _guarded(command, args) -> int:
     except KeyboardInterrupt:
         console.print("\nStopped.")
         return 130
-    except (ServerError, GenerationError, ValueError, FileNotFoundError) as err:
+    except (ServerError, GenerationError, TurntableError, ValueError, FileNotFoundError) as err:
         console.print(f"[red]Error:[/red] {err}")
         return 1
 
@@ -70,12 +73,15 @@ def _generate_parser() -> argparse.ArgumentParser:
         prog="idol-mlx",
         description="Turn a photo of an object into a 3D Gaussian splat, locally on Apple Silicon.",
         epilog="Other commands: `idol-mlx view FILE.ply…` (open existing splats), "
+        "`idol-mlx turntable FILE.ply` (spinning GIF/MP4 of an existing splat), "
         "`idol-mlx setup` (install everything without generating), `idol-mlx uninstall`.",
     )
     p.add_argument("inputs", nargs="+", type=Path, help="image files or folders of images")
     p.add_argument("-o", "--output", type=Path, help="output folder (default: next to each image)")
     p.add_argument("--format", choices=["ply", "glb"], default="ply", help="output format (default: ply)")
     p.add_argument("--view", action="store_true", help="open the results in a browser viewer")
+    p.add_argument("--turntable", nargs="?", const="gif", choices=["gif", "mp4"],
+                   help="also save a spinning animation of each result (default: gif)")  # fmt: skip
     preset = p.add_mutually_exclusive_group()
     preset.add_argument("--fast", action="store_true", help="4 steps, 65k Gaussians (~12 s)")
     preset.add_argument("--quality", choices=["high"], help="'high': 8 steps (~23 s)")
@@ -101,6 +107,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
     if args.gaussians is not None:
         settings["gaussians"] = args.gaussians
     check_settings(steps=settings["steps"], gaussians=settings["gaussians"], mode=args.mode)
+    if args.turntable:
+        check_turntable_tools(args.turntable)
 
     _ensure_mlx_serve_installed(assume_yes=False)
     if args.output:
@@ -113,6 +121,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     with console.status("Starting mlx-serve…"):
         idol = Idol(keep_server=args.keep_server, original=args.original)
     written: list[Path] = []
+    spins: list[tuple[Path, bytes]] = []
     try:
         for image in images:
             out_dir = args.output or image.parent
@@ -125,8 +134,13 @@ def cmd_generate(args: argparse.Namespace) -> int:
                 f"[green]✓[/green] {out_path}  [dim]{len(splat):,} Gaussians · {elapsed:.1f} s[/dim]"
             )
             written.append(out_path)
+            if args.turntable:
+                spins.append((out_dir / f"{image.stem}.{args.turntable}", splat.to_ply()))
     finally:
         idol.close()
+
+    for spin_path, ply in spins:  # after the server stops, so the browser has the GPU to itself
+        _render_turntable(ply, spin_path)
 
     if args.view:
         plys = [p for p in written if p.suffix == ".ply"]
@@ -179,6 +193,50 @@ def _collect_images(inputs: list[Path]) -> list[Path]:
 
 
 # ---------------------------------------------------------------- view / setup / uninstall
+
+
+def _turntable_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="idol-mlx turntable",
+        description="Save a spinning animation of a .ply splat. Needs Google Chrome (or Chromium, Brave, Edge).",
+    )
+    p.add_argument("file", type=Path, help="a .ply splat")
+    p.add_argument("-o", "--output", type=Path, help="output .gif or .mp4 (default: FILE.gif)")
+    p.add_argument("--frames", type=int, default=72, help="frames per full turn (default: 72)")
+    p.add_argument("--size", type=int, default=640, help="width and height in pixels (default: 640)")
+    p.add_argument("--fps", type=int, default=18, help="frames per second (default: 18)")
+    return p
+
+
+def cmd_turntable(args: argparse.Namespace) -> int:
+    if not args.file.is_file() or args.file.suffix.lower() != ".ply":
+        raise FileNotFoundError(f"{args.file} isn't a .ply file")
+    out_path = args.output or args.file.with_suffix(".gif")
+    check_turntable_tools(out_path.suffix.lstrip(".").lower())
+    _render_turntable(args.file.read_bytes(), out_path, frames=args.frames, size=args.size, fps=args.fps)
+    return 0
+
+
+def _render_turntable(ply: bytes, out_path: Path, frames: int = 72, size: int = 640, fps: int = 18) -> None:
+    started = time.monotonic()
+    with Progress(
+        TextColumn("[bold]{task.fields[name]}[/bold]"),
+        TextColumn("rendering turntable", style="dim"),
+        BarColumn(bar_width=28),
+        TaskProgressColumn(),
+        console=console,
+        transient=True,
+    ) as bar:
+        task = bar.add_task("", total=frames, name=out_path.name)
+        images = render_frames(
+            ply, frames=frames, size=size, on_frame=lambda n, _: bar.update(task, completed=n)
+        )
+    write_animation(images, out_path, fps=fps)
+    elapsed = time.monotonic() - started
+    size_mb = out_path.stat().st_size / 1e6
+    console.print(
+        f"[green]✓[/green] {out_path}  [dim]{frames} frames · {size_mb:.1f} MB · {elapsed:.1f} s[/dim]"
+    )
 
 
 def _view_parser() -> argparse.ArgumentParser:

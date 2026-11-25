@@ -12,11 +12,11 @@
 </p>
 
 <p align="center">
-  <img src="assets/hero.gif" alt="Photos of a toy castle and a stained-glass lamp next to the 3D splats idol-mlx made from them, rotating" width="100%">
+  <img src="https://raw.githubusercontent.com/cfahlgren1/idol-mlx/main/assets/hero.gif" alt="Photos of a toy castle and a stained-glass lamp next to the 3D splats idol-mlx made from them, rotating" width="100%">
 </p>
 
 ```bash
-uvx --from git+https://github.com/cfahlgren1/idol-mlx idol-mlx castle.jpg --view
+uvx idol-mlx castle.jpg --view
 ```
 
 That's it. You get `castle.ply`, a standard 3D Gaussian splat with up to a million Gaussians, including the sides the photo never showed. `--view` opens it in your browser.
@@ -39,11 +39,8 @@ Everything runs on your machine. There's no account and no upload, and you don't
 You need an Apple Silicon Mac with macOS 26.2 or later, and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-# run without installing
-uvx --from git+https://github.com/cfahlgren1/idol-mlx idol-mlx photo.jpg
-
-# or install the `idol-mlx` command
-uv tool install git+https://github.com/cfahlgren1/idol-mlx
+uvx idol-mlx photo.jpg        # run without installing
+uv tool install idol-mlx      # or install the `idol-mlx` command
 ```
 
 The first run installs [mlx-serve](https://github.com/ddalcu/mlx-serve) through Homebrew if you don't have it (it asks first). It then downloads the model and builds the Turbo pack, which takes about a minute and 4.6 GB of downloads, once. To do all of that up front, run `idol-mlx setup`.
@@ -60,6 +57,18 @@ idol-mlx photo.jpg --seed 7            # a different take on the same image
 idol-mlx photo.jpg --keep-server       # leave the model loaded for the next run
 idol-mlx view splats/                  # open .ply files you already have
 ```
+
+### Turntables
+
+Get a spinning animation of the result, ready to post:
+
+```bash
+idol-mlx photo.jpg --turntable         # → photo.ply + photo.gif
+idol-mlx photo.jpg --turntable mp4     # MP4 instead (needs ffmpeg)
+idol-mlx turntable photo.ply           # from a splat you already have
+```
+
+Turntables are rendered in a headless browser, so they need Google Chrome (or Chromium, Brave or Edge). A 72-frame, 640 px GIF takes about 20 s and is 3–5 MB with ffmpeg installed, larger without it.
 
 ### Presets
 

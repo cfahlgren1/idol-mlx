@@ -44,3 +44,16 @@ def test_generates_a_splat(tmp_path: Path):
     assert "idol-denoise" in stages
     out = splat.save(tmp_path / "lamp.ply")
     assert out.stat().st_size > 32_768 * 17 * 4
+
+
+def test_renders_a_turntable(tmp_path: Path):
+    from idol_mlx import Splat
+    from idol_mlx.turntable import render_frames, write_animation
+
+    ply = Splat.from_glb((Path(__file__).parent / "fixtures" / "lamp.glb").read_bytes()).to_ply()
+    images = render_frames(ply, frames=8, size=256)
+    assert len(images) == 8
+    # something other than the background was drawn
+    assert max(images[0].getextrema(), key=lambda band: band[1])[1] > 60
+    out = write_animation(images, tmp_path / "spin.gif")
+    assert out.stat().st_size > 0
