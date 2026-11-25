@@ -3,16 +3,21 @@
 The Turbo pack is the base pack with one file replaced: Idol's denoiser with Idol Turbo's high-noise ("slow") LoRA
 expert merged into its weights (W' = W + alpha/rank * B @ A), then quantized exactly the way the base pack was.
 To mlx-serve it is plain Idol, so it runs Turbo without adapter support.
+
+That merged denoiser is published, so the Turbo pack normally downloads it. If the download fails, it is built
+locally the same way, which needs `mlx` (the `merge` extra) and gives the same tensors as the published file.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from collections.abc import Callable
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub.errors import HfHubHTTPError
 
 from .server import MODELS_DIR
 
@@ -20,6 +25,10 @@ BASE_REPO = "ddalcu/Idol-MLX-Serve-8bit"
 IDOL_REPO = "speridlabs/idol"
 TURBO_REPO = "speridlabs/idol-turbo"
 TURBO_LORA_FILE = "idol_turbo_lora.safetensors"
+# The merged denoiser, published. Pinned to a commit and checked by hash, so a later upload can't change what installs.
+TURBO_PACK_REPO = "cfahlgren1/Idol-Turbo-MLX-8bit"
+TURBO_PACK_REVISION = "9c9b050c6ae66b969ef50c82fa0432f9ecb11dbb"
+TURBO_DENOISER_SHA256 = "45d3ed9f4f8f6f66a3e8e913cd07b341582f5c5d21fccd52196e411be619d71a"
 
 BASE_MODEL_ID = "Idol-MLX-Serve-8bit"
 TURBO_MODEL_ID = "Idol-Turbo"
@@ -35,6 +44,10 @@ BITS = 8
 BLOCK_PREFIXES = ("blocks.", "noise_refiner.", "context_refiner.")
 
 Log = Callable[[str], None]
+
+
+class PackError(RuntimeError):
+    pass
 
 
 def turbo_ready() -> bool:
@@ -59,38 +72,76 @@ def ensure_turbo_pack(log: Log = print) -> Path:
         return TURBO_DIR
     ensure_base_pack(log)
 
+    building = TURBO_DIR.with_name(TURBO_DIR.name + ".building")
+    shutil.rmtree(building, ignore_errors=True)
+    building.mkdir(parents=True)
+    try:
+        log(f"Downloading the Turbo denoiser ({TURBO_PACK_REPO}, 447 MB, once)")
+        download_turbo_denoiser(building)
+        source = {"denoiser": f"{TURBO_PACK_REPO}@{TURBO_PACK_REVISION}"}
+    except (OSError, HfHubHTTPError, ValueError) as err:
+        log(f"Couldn't download it ({err}). Building it locally instead.")
+        try:
+            source = build_turbo_denoiser(building / "denoiser.safetensors", log)
+        except BaseException:
+            shutil.rmtree(building, ignore_errors=True)
+            raise
+
+    for entry in BASE_DIR.iterdir():
+        if entry.name not in {"denoiser.safetensors", MARKER} and not entry.name.startswith("."):
+            (building / entry.name).symlink_to(entry.resolve())
+    (building / MARKER).write_text(json.dumps({"base": BASE_REPO, **source}, indent=2))
+    shutil.rmtree(TURBO_DIR, ignore_errors=True)
+    building.rename(TURBO_DIR)
+    log(f"Turbo pack ready at {TURBO_DIR}")
+    return TURBO_DIR
+
+
+def download_turbo_denoiser(pack_dir: Path) -> None:
+    """Download the published merged denoiser into `pack_dir`, and check it is the expected file."""
+    path = Path(
+        hf_hub_download(
+            TURBO_PACK_REPO, "denoiser.safetensors", revision=TURBO_PACK_REVISION, local_dir=pack_dir
+        )
+    )
+    shutil.rmtree(pack_dir / ".cache", ignore_errors=True)  # local_dir bookkeeping, not part of the pack
+    digest = sha256(path)
+    if digest != TURBO_DENOISER_SHA256:
+        path.unlink()
+        raise ValueError(f"the downloaded denoiser has SHA-256 {digest}, expected {TURBO_DENOISER_SHA256}")
+
+
+def build_turbo_denoiser(out_path: Path, log: Log = print) -> dict:
+    """Build the merged denoiser from Idol and the Turbo adapter, the way the published one was built."""
+    try:
+        import mlx.core  # noqa: F401  (only to fail early with a clear message)
+    except ImportError as err:
+        raise PackError(
+            "Building the Turbo pack locally needs mlx. Run `uvx --from 'idol-mlx[merge]' idol-mlx setup` "
+            "or `pip install 'idol-mlx[merge]'`, or retry when the download works."
+        ) from err
     log(
         f"Downloading Idol's full-precision denoiser ({IDOL_REPO}, 1.5 GB) and the Turbo adapter ({TURBO_REPO})"
     )
     denoiser_path = hf_hub_download(IDOL_REPO, "denoiser.safetensors")
     lora_path = hf_hub_download(TURBO_REPO, TURBO_LORA_FILE)
-
     log("Merging the Turbo adapter into the denoiser")
-    building = TURBO_DIR.with_name(TURBO_DIR.name + ".building")
-    shutil.rmtree(building, ignore_errors=True)
-    building.mkdir(parents=True)
-    layers = merge_and_quantize(Path(denoiser_path), Path(lora_path), building / "denoiser.safetensors")
+    layers = merge_and_quantize(Path(denoiser_path), Path(lora_path), out_path)
+    return {
+        "denoiser": IDOL_REPO,
+        "adapter": f"{TURBO_REPO}/{TURBO_LORA_FILE}",
+        "expert": EXPERT,
+        "merged_layers": layers,
+        "bits": BITS,
+    }
 
-    for entry in BASE_DIR.iterdir():
-        if entry.name not in {"denoiser.safetensors", MARKER} and not entry.name.startswith("."):
-            (building / entry.name).symlink_to(entry.resolve())
-    (building / MARKER).write_text(
-        json.dumps(
-            {
-                "base": BASE_REPO,
-                "denoiser": IDOL_REPO,
-                "adapter": f"{TURBO_REPO}/{TURBO_LORA_FILE}",
-                "expert": EXPERT,
-                "merged_layers": layers,
-                "bits": BITS,
-            },
-            indent=2,
-        )
-    )
-    shutil.rmtree(TURBO_DIR, ignore_errors=True)
-    building.rename(TURBO_DIR)
-    log(f"Turbo pack ready at {TURBO_DIR}")
-    return TURBO_DIR
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def merge_and_quantize(denoiser_path: Path, lora_path: Path, out_path: Path) -> int:

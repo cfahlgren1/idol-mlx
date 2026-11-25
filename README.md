@@ -43,7 +43,7 @@ uvx idol-mlx photo.jpg        # run without installing
 uv tool install idol-mlx      # or install the `idol-mlx` command
 ```
 
-The first run installs [mlx-serve](https://github.com/ddalcu/mlx-serve) through Homebrew if you don't have it (it asks first). It then downloads the model and builds the Turbo pack, which takes about a minute and 4.6 GB of downloads, once. To do all of that up front, run `idol-mlx setup`.
+The first run installs [mlx-serve](https://github.com/ddalcu/mlx-serve) through Homebrew if you don't have it (it asks first). It then downloads the model and the Turbo pack, about 3.2 GB, once. To do all of that up front, run `idol-mlx setup`.
 
 ## Usage
 
@@ -114,7 +114,7 @@ flowchart LR
 ```
 
 - **mlx-serve does the model work.** It's a native MLX server that already runs Idol on Apple Silicon.
-- **idol-mlx adds Turbo.** Turbo is a small adapter (a LoRA) that teaches Idol to finish in 5 steps instead of 50. mlx-serve can't load adapters, so the Turbo pack has the adapter merged into Idol's weights ahead of time: `W' = W + 4·B·A` for each of its 112 layers. To mlx-serve it looks like plain Idol.
+- **idol-mlx adds Turbo.** Turbo is a small adapter (a LoRA) that teaches Idol to finish in 5 steps instead of 50. mlx-serve can't load adapters, so the Turbo pack has the adapter merged into Idol's weights ahead of time: `W' = W + 4·B·A` for each of its 112 layers. To mlx-serve it looks like plain Idol. The merged denoiser is published as [cfahlgren1/Idol-Turbo-MLX-8bit](https://huggingface.co/cfahlgren1/Idol-Turbo-MLX-8bit); idol-mlx downloads that pinned file and checks its SHA-256. If the download fails, it builds the same weights locally, which needs `mlx` (`idol-mlx[merge]`).
 - **It also converts the output.** mlx-serve returns a GLB using `KHR_gaussian_splatting`, and idol-mlx rewrites it as a standard 3DGS `.ply`, which works in SuperSplat, Spark, gsplat and the Hugging Face file viewer.
 
 Where the 15 seconds go, measured on an M3 Max:
@@ -155,7 +155,7 @@ On M1–M4 the GPU, not memory, is the bottleneck, and MLX converts 8-bit weight
 <details>
 <summary><b>Where do the files go?</b></summary>
 
-Models live in `~/.mlx-serve/models`: the base pack in `Idol-MLX-Serve-8bit`, and the Turbo pack in `Idol-Turbo`, which links to the base pack's files and adds only the merged denoiser. The full-precision denoiser and the adapter used to build it stay in your Hugging Face cache. mlx-serve's log is `~/.mlx-serve/idol-mlx-server.log`.
+Models live in `~/.mlx-serve/models`: the base pack in `Idol-MLX-Serve-8bit`, and the Turbo pack in `Idol-Turbo`, which links to the base pack's files and adds only the merged denoiser. If the pack was built locally, the full-precision denoiser and the adapter used to build it stay in your Hugging Face cache. mlx-serve's log is `~/.mlx-serve/idol-mlx-server.log`.
 
 `idol-mlx uninstall` removes the Turbo pack, and `idol-mlx uninstall --all` also removes the base pack.
 </details>

@@ -1,6 +1,6 @@
 # idol-mlx: package design
 
-Status: v0.1 implemented (local-merge pack, default and preset generation, folders, `view`, `setup`, `uninstall`). The pack is built locally on first run; publishing a merged pack is still open.
+Status: v0.1 implemented (local-merge pack, default and preset generation, folders, `view`, `setup`, `uninstall`). Since v0.2 the merged Turbo denoiser is published as cfahlgren1/Idol-Turbo-MLX-8bit and downloaded (pinned revision, SHA-256 checked); building it locally is the fallback.
 
 ## Goal
 

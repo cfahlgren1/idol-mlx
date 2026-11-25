@@ -16,8 +16,11 @@ dependencies = [
     "numpy>=1.26",
     "pillow>=10",
     "rich>=13",
-    "mlx>=0.20; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+
+[project.optional-dependencies]
+# Only to build the Turbo pack locally when its download fails; normally the merged denoiser is downloaded.
+merge = ["mlx>=0.20; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 
 [project.urls]
 Repository = "https://github.com/cfahlgren1/idol-mlx"
@@ -26,7 +29,7 @@ Repository = "https://github.com/cfahlgren1/idol-mlx"
 idol-mlx = "idol_mlx.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=8", "ruff>=0.6", "mlx>=0.20; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 
 [build-system]
 requires = ["hatchling"]

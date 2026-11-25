@@ -10,11 +10,13 @@ import time
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeElapsedColumn
 
 from . import __version__, pack, server
 from .client import GenerationError, Idol, check_settings
 from .client import Progress as StageProgress
+from .pack import PackError
 from .server import ServerError
 from .splat import Splat
 from .turntable import TurntableError, check_turntable_tools, render_frames, write_animation
@@ -62,8 +64,8 @@ def _guarded(command, args) -> int:
     except KeyboardInterrupt:
         console.print("\nStopped.")
         return 130
-    except (ServerError, GenerationError, TurntableError, ValueError, FileNotFoundError) as err:
-        console.print(f"[red]Error:[/red] {err}")
+    except (ServerError, GenerationError, PackError, TurntableError, ValueError, FileNotFoundError) as err:
+        console.print(f"[red]Error:[/red] {escape(str(err))}")
         return 1
 
 

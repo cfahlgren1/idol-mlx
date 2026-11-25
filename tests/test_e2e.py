@@ -33,6 +33,28 @@ def test_turbo_pack_quantizes_like_the_published_base_pack():
     assert different == []
 
 
+def test_published_turbo_denoiser_is_what_a_local_merge_builds(tmp_path: Path):
+    """The merged denoiser idol-mlx downloads must hold exactly the tensors that merging Idol and the Turbo adapter
+    produces. Compared tensor by tensor: mlx versions can lay out the same tensors differently in the file."""
+    import mlx.core as mx
+
+    from idol_mlx import pack
+
+    pack.download_turbo_denoiser(tmp_path / "downloaded")
+    pack.build_turbo_denoiser(tmp_path / "built.safetensors", log=lambda _: None)
+
+    assert sorted(p.name for p in (tmp_path / "downloaded").iterdir()) == ["denoiser.safetensors"]
+    published = mx.load(str(tmp_path / "downloaded" / "denoiser.safetensors"))
+    built = mx.load(str(tmp_path / "built.safetensors"))
+    assert published.keys() == built.keys()
+    different = [
+        k
+        for k in published
+        if published[k].dtype != built[k].dtype or not mx.array_equal(published[k], built[k]).item()
+    ]
+    assert different == []
+
+
 def test_generates_a_splat(tmp_path: Path):
     from idol_mlx import Idol
 
